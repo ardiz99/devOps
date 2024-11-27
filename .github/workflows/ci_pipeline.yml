@@ -1,0 +1,65 @@
+name: CI/CD Pipeline for Microservices
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # Step 1: Checkout the code
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Step 2: Set up Docker
+    - name: Set up Docker
+      uses: docker/setup-buildx-action@v3
+
+    # Step 3: Build Docker Compose services
+    - name: Build production services with Docker Compose
+      run: docker-compose -f src/docker-compose.yml build
+
+    # Step 4: Build test containers
+    - name: Build test containers for unit tests
+      run: |
+        docker build -f src/calc/Dockerfile_test -t calc-test src/calc
+        docker build -f src/string/Dockerfile_test -t string-test src/string
+
+    # Step 5: Run unit tests for calc
+    - name: Run unit tests for "calc"
+      run: |
+        docker run --rm calc-test pytest app_test.py --disable-warnings
+
+    # Step 6: Run unit tests for string
+    - name: Run unit tests for "string"
+      run: |
+        docker run --rm string-test pytest app_test.py --disable-warnings
+
+    # Step 7: Start services for integration tests
+    - name: Start services
+      run: docker-compose -f src/docker-compose.yml up -d
+
+    # Step 8: Wait for services to be ready
+    - name: Wait for services to be ready
+      run: sleep 15
+
+    # Step 9: Run integration tests with Newman
+    - name: Run integration tests
+      run: |
+        docker-compose -f src/docker-compose.yml exec -T gateway newman run /test/integration.postman_collection.json
+
+    # Step 10: Run load tests with Locust
+    - name: Run load tests with Locust
+      run: |
+        docker-compose -f src/docker-compose.yml exec -T gateway locust -f /test/locustfile.py --headless -u 100 -r 10 --run-time 1m --host=http://gateway:5000
+
+    # Step 11: Tear down services
+    - name: Tear down services
+      if: always()
+      run: docker-compose -f src/docker-compose.yml down
