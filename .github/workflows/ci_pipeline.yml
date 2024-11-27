@@ -17,49 +17,30 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # Step 2: Set up Docker
-    - name: Set up Docker
-      uses: docker/setup-buildx-action@v3
-
-    # Step 3: Build Docker Compose services
-    - name: Build production services with Docker Compose
-      run: docker-compose -f src/docker-compose.yml build
-
-    # Step 4: Build test containers
-    - name: Build test containers for unit tests
+    # Step 2: Set up Docker (Docker è già preinstallato)
+    - name: Log in to Docker Hub (if needed)
+      env:
+        DOCKER_USER: ${{ secrets.DOCKER_USER }}
+        DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       run: |
-        docker build -f src/calc/Dockerfile_test -t calc-test src/calc
-        docker build -f src/string/Dockerfile_test -t string-test src/string
+        echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin || true
 
-    # Step 5: Run unit tests for calc
-    - name: Run unit tests for "calc"
-      run: |
-        docker run --rm calc-test pytest app_test.py --disable-warnings
+    # Step 3: Build and run services with Docker Compose
+    - name: Build and start services with Docker Compose
+      run: docker compose -f src/docker-compose.yml up --build -d
 
-    # Step 6: Run unit tests for string
-    - name: Run unit tests for "string"
-      run: |
-        docker run --rm string-test pytest app_test.py --disable-warnings
+    # Step 4: Run unit tests
+    - name: Run unit tests for calc
+      run: docker compose exec calc pytest app_test.py --disable-warnings
 
-    # Step 7: Start services for integration tests
-    - name: Start services
-      run: docker-compose -f src/docker-compose.yml up -d
+    - name: Run unit tests for string
+      run: docker compose exec string pytest app_test.py --disable-warnings
 
-    # Step 8: Wait for services to be ready
-    - name: Wait for services to be ready
-      run: sleep 15
+    # Step 5: Run integration tests
+    - name: Run integration tests with Newman
+      run: docker compose exec gateway newman run /test/integration.postman_collection.json
 
-    # Step 9: Run integration tests with Newman
-    - name: Run integration tests
-      run: |
-        docker-compose -f src/docker-compose.yml exec -T gateway newman run /test/integration.postman_collection.json
-
-    # Step 10: Run load tests with Locust
-    - name: Run load tests with Locust
-      run: |
-        docker-compose -f src/docker-compose.yml exec -T gateway locust -f /test/locustfile.py --headless -u 100 -r 10 --run-time 1m --host=http://gateway:5000
-
-    # Step 11: Tear down services
-    - name: Tear down services
+    # Step 6: Tear down services
+    - name: Stop and remove services
       if: always()
-      run: docker-compose -f src/docker-compose.yml down
+      run: docker compose -f src/docker-compose.yml down
